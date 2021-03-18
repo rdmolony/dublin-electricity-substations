@@ -7,11 +7,13 @@ channels:
 dependencies:
   - dask
   - geopandas
-  - matplotlib
   - momepy
   - openpyxl
+  - osmnx
   - pygeos
-  - scikit-learn
+  - seaborn
+  - sklearn 
+  - sparse_dot_topn
   
   - black
   - ipykernel
@@ -19,3 +21,6 @@ dependencies:
   - jupytext
   - poetry
   - pre-commit
+
+  - pip:
+    - string_grouper
