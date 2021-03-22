@@ -4,6 +4,7 @@ from pathlib import Path
 from shutil import unpack_archive
 
 import geopandas as gpd
+from shapely.geometry import box
 
 import dublin_electricity_network as den
 
@@ -16,6 +17,8 @@ den.download(
     url="https://zenodo.org/record/4577018/files/dublin_boundary.geojson",
     to_filepath=str(data_dir / "dublin_boundary.geojson"),
 )
+# %%
+dublin_boundary = gpd.read_file(data_dir / "dublin_boundary.geojson")
 
 # %% [markdown]
 # # Get Dublin LA boundaries
@@ -48,23 +51,23 @@ den.download(
 )
 
 # %%
-heatmap_stations_ireland = den.read_heatmap(
+esbmap_stations_ireland = den.read_heatmap(
     data_dir / "heatmap-download-version-nov-2020.xlsx"
 )
 
 # %%
-heatmap_stations_dublin = gpd.sjoin(
-    heatmap_stations_ireland,
+esbmap_stations_dublin = gpd.sjoin(
+    esbmap_stations_ireland,
     dublin_admin_county_boundaries,
     op="within",
 ).drop(columns="index_right")
 
 # %%
-heatmap_stations_dublin_hv = heatmap_stations_dublin.query("station_name != 'mv/lv'")
+esbmap_stations_dublin_hv = esbmap_stations_dublin.query("station_name != 'mv/lv'")
 
 # %%
-heatmap_stations_dublin_hv.to_file(
-    data_dir / "heatmap_stations.geojson",
+esbmap_stations_dublin_hv.to_file(
+    data_dir / "esbmap_stations.geojson",
     driver="GeoJSON",
 )
 
@@ -87,4 +90,54 @@ cad_stations_dublin = gpd.sjoin(
 ).drop(columns=["index_right", "COUNTYNAME"])
 # %%
 cad_stations_dublin.to_file(data_dir / "cad_stations_dublin.geojson", driver="GeoJSON")
+
+# %% [markdown]
+# # Get Dublin Small Area boundaries
+
+# %%
+small_area_boundaries_filepath = (
+    data_dir
+    / "Small_Areas_Ungeneralised_-_OSi_National_Statistical_Boundaries_-_2015-shp"
+)
+# %%
+den.download(
+    url="https://opendata.arcgis.com/datasets/c85e610da1464178a2cd84a88020c8e2_3.zip",
+    to_filepath=str(small_area_boundaries_filepath.with_suffix(".zip")),
+)
+# %%
+unpack_archive(
+    small_area_boundaries_filepath.with_suffix(".zip"),
+    small_area_boundaries_filepath,
+)
+
+# %% [markdown]
+# # Get Dublin MV Network Lines
+
+# %%
+ireland_mv_index = den.read_mv_index(cad_data / "Ancillary Data" / "mv_index.dgn")
+
+# %%
+dublin_boundary = (
+    gpd.GeoSeries(box(695000, 715000, 740000, 771000)).rename("geometry").to_frame()
+)
+# %%
+dublin_mv_index = gpd.sjoin(
+    ireland_mv_index, dublin_boundary.to_crs(epsg=2157), op="within"
+)
+# %%
+dublin_mv_network_filepaths = [
+    cad_data / "Dig Request Style" / "MV-LV Data" / f"{index}.dgn"
+    for index in dublin_mv_index.Text
+]
+# %%
+dublin_mv_network_lines = (
+    den.read_network(dublin_mv_network_filepaths, levels=[10, 11, 14])
+    .reset_index(drop=True)
+    .explode()
+)
+# %%
+dublin_mv_network_lines.to_file(
+    data_dir / "dublin_mv_network_lines.geojson", driver="GeoJSON"
+)
+
 # %%

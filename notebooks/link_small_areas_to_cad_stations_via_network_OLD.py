@@ -1,10 +1,18 @@
 # %% [markdown]
-# # Warning!
-# Must run: `link_cad_stations_to_map_stations.ipynb` so Small Areas can be linked to Map stations via CAD stations
+# # Run `link_cad_stations_to_map_stations.ipynb` first so that Small Areas can be linked to Map stations via CAD stations
 
 # %% [markdown]
-# # Import dependencies
+# # Setup
+
+# %%
+# Uncomment if running on Google Colab
+# Click RESTART RUNTIME if prompted
+# !pip install git+https://github.com/codema-dev/dublin-electricity-network
+
+# %%
+from os import listdir
 from pathlib import Path
+from shutil import unpack_archive
 
 import pandas as pd
 import geopandas as gpd
@@ -12,6 +20,7 @@ import matplotlib.patheffects as pe
 import matplotlib.pyplot as plt
 import momepy
 import networkx as nx
+from shapely.geometry import box
 
 import dublin_electricity_network as den
 
@@ -20,34 +29,87 @@ cad_data = Path("/home/wsl-rowanm/Data/ESBdata_20200124")
 show_plots = False
 
 # %% [markdown]
-# # Read Dublin Small Area boundaries
-dublin_small_area_boundaries = den.read_dublin_small_areas(
+# # Get Small Area boundaries
+
+# %%
+small_area_boundaries_filepath = (
     data_dir
     / "Small_Areas_Ungeneralised_-_OSi_National_Statistical_Boundaries_-_2015-shp"
 )
+den.download(
+    url="https://opendata.arcgis.com/datasets/c85e610da1464178a2cd84a88020c8e2_3.zip",
+    to_filepath=str(small_area_boundaries_filepath.with_suffix(".zip")),
+)
+unpack_archive(
+    small_area_boundaries_filepath.with_suffix(".zip"),
+    small_area_boundaries_filepath,
+)
+
+small_areas = den.read_dublin_small_areas(small_area_boundaries_filepath)
 
 # %% [markdown]
-# # Read Local Authority boundaries
+# # Get Local Authority boundaries
+
+# %%
 dublin_admin_county_boundaries = den.read_dublin_admin_county_boundaries(
     data_dir / "dublin_admin_county_boundaries"
 )
 
 # %% [markdown]
-# # Read Dublin MV Network Lines
-dublin_mv_network_lines = gpd.read_file(
-    data_dir / "dublin_mv_network_lines.geojson", driver="GeoJSON"
+# # Get MV Network and Get 38kV, 110kV & 220kV  stations
+#
+# ... there is no 400kV station in Dublin
+
+# %%
+ireland_mv_index = den.read_mv_index(cad_data / "Ancillary Data" / "mv_index.dgn")
+
+# %%
+dublin_boundary = (
+    gpd.GeoSeries(box(695000, 715000, 740000, 771000)).rename("geometry").to_frame()
+)
+dublin_mv_index = gpd.sjoin(ireland_mv_index, dublin_boundary, op="within")
+dublin_mv_network_filepaths = [
+    cad_data / "Dig Request Style" / "MV-LV Data" / f"{index}.dgn"
+    for index in dublin_mv_index.Text
+]
+
+mv_network_lines = (
+    den.read_network(dublin_mv_network_filepaths, levels=[10, 11, 14])
+    .reset_index(drop=True)
+    .explode()
 )
 
-# %% [markdown]
-# # Read Dublin HV Station locations
-hv_stations_dublin = gpd.read_file(
-    data_dir / "cad_stations_dublin.geojson",
-    driver="GeoJSON",
+# %%
+hv_network_filepaths = [
+    cad_data / "Dig Request Style" / "HV Data" / filename
+    for filename in listdir(cad_data / "Dig Request Style" / "HV Data")
+]
+
+hv_stations_ireland = den.read_network(hv_network_filepaths, levels=[20, 30, 40])
+hv_stations_dublin = (
+    gpd.sjoin(
+        hv_stations_ireland,
+        dublin_admin_county_boundaries,
+        op="within",
+    )
+    .drop(columns=["index_right", "COUNTYNAME"])
+    .reset_index(drop=True)
+    .assign(station_id=lambda gdf: gdf.index)
 )
 
+# %%
+if show_plots:
+
+    ax = dublin_admin_county_boundaries.plot(
+        figsize=(15, 15), facecolor="orange", edgecolor="orange"
+    )
+    mv_network_lines.plot(ax=ax)
+    dublin_boundary.plot(ax=ax, facecolor="none", edgecolor="cyan")
+    hv_stations_dublin.plot(ax=ax, color="black")
 
 # %% [markdown]
 # # Link Each Small Area Centroid to a Station via Network
+#
 # Use `networkx` to find the station that is closest along the network to each small area centroid:
 # - Convert `geopandas` `GeoDataFrame` to `networkx` `MultiGraph` via `momepy` for network analysis
 # - Extract the largest unbroken network
@@ -55,7 +117,7 @@ hv_stations_dublin = gpd.read_file(
 # - Trace the path from each small area centroid to the nearest station along the network
 
 # %%
-G = momepy.gdf_to_nx(dublin_mv_network_lines, approach="primal")
+G = momepy.gdf_to_nx(mv_network_lines, approach="primal")
 
 # %%
 G_largest = den.get_largest_subgraph(G)
@@ -73,10 +135,7 @@ G_largest_edges_buffered = (
 )
 
 # %%
-small_areas_near_g_largest = den.centroids_within(
-    dublin_small_area_boundaries,
-    G_largest_edges_buffered,
-)
+small_areas_near_g_largest = den.centroids_within(small_areas, G_largest_edges_buffered)
 
 # %%
 hv_stations_near_g_largest = (
@@ -143,9 +202,7 @@ small_areas_linked_to_stations_via_network = den.extract_nearest_dest(
 
 # %%
 small_areas_remaining_centroids = gpd.GeoDataFrame(
-    dublin_small_area_boundaries.merge(
-        small_areas_near_g_largest, how="left", indicator=True
-    )
+    small_areas.merge(small_areas_near_g_largest, how="left", indicator=True)
     .query("`_merge` == 'left_only'")
     .drop(columns="_merge")
     .assign(geometry=lambda gdf: gdf.geometry.centroid)
@@ -155,7 +212,7 @@ small_areas_remaining_centroids = gpd.GeoDataFrame(
 small_areas_linked_to_stations_via_nearest = (
     den.join_nearest_points(small_areas_remaining_centroids, hv_stations_dublin)
     .drop(columns=["geometry", "COUNTYNAME"])
-    .merge(dublin_small_area_boundaries)
+    .merge(small_areas)
     .drop_duplicates(subset="SMALL_AREA")
 )
 
