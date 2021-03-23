@@ -79,18 +79,31 @@ esbmap_stations_clustered = cluster_itm_coords(
 )
 
 # %%
-f, ax = plt.subplots(figsize=(20, 20))
-dublin_boundary.plot(ax=ax, alpha=0.5)
-esbmap_stations_clustered.plot(
-    ax=ax, c="#99cc99", edgecolor="None", alpha=0.7, markersize=120
+def plot_clusters(boundary, unclustered, clustered, column_name):
+    f, ax = plt.subplots(figsize=(20, 20))
+    boundary.plot(ax=ax, alpha=0.5)
+    clustered.plot(ax=ax, c="#99cc99", edgecolor="None", alpha=0.7, markersize=120)
+    clustered.apply(
+        lambda gdf: ax.annotate(
+            "ID=" + str(gdf["cluster_id"]), xy=gdf.geometry.centroid.coords[0], va="top"
+        ),
+        axis="columns",
+    )
+    clustered.apply(
+        lambda gdf: ax.annotate(
+            gdf[column_name], xy=gdf.geometry.centroid.coords[0], va="bottom"
+        ),
+        axis="columns",
+    )
+    unclustered.plot(ax=ax, c="k", alpha=0.9, markersize=3)
+
+
+plot_clusters(
+    dublin_boundary,
+    esbmap_stations_dublin,
+    esbmap_stations_clustered,
+    "slr_load_mva",
 )
-esbmap_stations_clustered.apply(
-    lambda gdf: ax.annotate(
-        gdf["demand_available_mva"], xy=gdf.geometry.centroid.coords[0]
-    ),
-    axis="columns",
-)
-esbmap_stations_dublin.plot(ax=ax, c="k", alpha=0.9, markersize=3)
 
 # %%
 esbmap_stations_clustered.to_file(
