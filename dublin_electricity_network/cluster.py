@@ -56,11 +56,7 @@ def cluster_itm_coords(
         .rename(columns={"index": "cluster_id"})
     )
 
-    gdf_linked_to_clusters = _join_nearest_points(
+    return _join_nearest_points(
         gdf,
         centermost_points,
-    )
-
-    return gdf_linked_to_clusters[keep_columns].dissolve(
-        by="cluster_id", aggfunc="sum", as_index=False
-    )
+    ).loc[:, "cluster_id"]
